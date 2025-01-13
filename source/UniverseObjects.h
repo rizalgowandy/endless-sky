@@ -7,22 +7,27 @@ Foundation, either version 3 of the License, or (at your option) any later versi
 
 Endless Sky is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
-#ifndef UNIVERSE_OBJECTS_H_
-#define UNIVERSE_OBJECTS_H_
+#pragma once
 
 #include "CategoryTypes.h"
 #include "Sale.h"
 #include "Set.h"
 
+#include "CategoryList.h"
 #include "Color.h"
 #include "Conversation.h"
 #include "Effect.h"
 #include "Fleet.h"
+#include "FormationPattern.h"
 #include "Galaxy.h"
 #include "GameEvent.h"
+#include "Gamerules.h"
 #include "Government.h"
 #include "Hazard.h"
 #include "Interface.h"
@@ -36,18 +41,25 @@ PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 #include "Ship.h"
 #include "StartConditions.h"
 #include "System.h"
-#include "Test.h"
-#include "TestData.h"
+#include "test/Test.h"
+#include "test/TestData.h"
 #include "TextReplacements.h"
 #include "Trade.h"
+#include "Wormhole.h"
 
+#include <atomic>
+#include <filesystem>
 #include <future>
 #include <map>
+#include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
 
+class Panel;
 class Sprite;
+class TaskQueue;
 
 
 
@@ -56,9 +68,11 @@ class Sprite;
 class UniverseObjects {
 	// GameData currently is the orchestrating controller for all game definitions.
 	friend class GameData;
+	friend class TestData;
 public:
 	// Load game objects from the given directories of definitions.
-	std::future<void> Load(const std::vector<std::string> &sources, bool debugMode = false);
+	std::shared_future<void> Load(TaskQueue &queue, const std::vector<std::filesystem::path> &sources,
+		bool debugMode = false);
 	// Determine the fraction of data files read from disk.
 	double GetProgress() const;
 	// Resolve every game object dependency.
@@ -73,9 +87,13 @@ public:
 	// Check for objects that are referred to but never defined.
 	void CheckReferences();
 
+	// Draws the current menu background. Unlike accessing the menu background
+	// through GameData, this function is thread-safe.
+	void DrawMenuBackground(Panel *panel) const;
+
 
 private:
-	void LoadFile(const std::string &path, bool debugMode = false);
+	void LoadFile(const std::filesystem::path &path, bool debugMode = false);
 
 
 private:
@@ -89,6 +107,7 @@ private:
 	Set<Effect> effects;
 	Set<GameEvent> events;
 	Set<Fleet> fleets;
+	Set<FormationPattern> formations;
 	Set<Galaxy> galaxies;
 	Set<Government> governments;
 	Set<Hazard> hazards;
@@ -106,8 +125,10 @@ private:
 	Set<TestData> testDataSets;
 	Set<Sale<Ship>> shipSales;
 	Set<Sale<Outfit>> outfitSales;
+	Set<Wormhole> wormholes;
 	std::set<double> neighborDistances;
 
+	Gamerules gamerules;
 	TextReplacements substitutions;
 	Trade trade;
 	std::vector<StartConditions> startConditions;
@@ -115,14 +136,14 @@ private:
 	std::map<const Sprite *, std::string> landingMessages;
 	std::map<const Sprite *, double> solarPower;
 	std::map<const Sprite *, double> solarWind;
-	std::map<CategoryType, std::vector<std::string>> categories;
+	std::map<const Sprite *, const Sprite *> starIcons;
+	std::map<CategoryType, CategoryList> categories;
 
 	std::map<std::string, std::string> tooltips;
 	std::map<std::string, std::string> helpMessages;
+	std::map<std::string, std::set<std::string>> disabled;
 
-
+	// A local cache of the menu background interface for thread-safe access.
+	mutable std::mutex menuBackgroundMutex;
+	Interface menuBackgroundCache;
 };
-
-
-
-#endif

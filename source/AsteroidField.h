@@ -7,17 +7,18 @@ Foundation, either version 3 of the License, or (at your option) any later versi
 
 Endless Sky is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
-#ifndef ASTEROID_FIELD_H_
-#define ASTEROID_FIELD_H_
+#pragma once
 
 #include "Angle.h"
 #include "Body.h"
 #include "CollisionSet.h"
 #include "Point.h"
-#include "System.h"
 #include "WeightedList.h"
 
 #include <list>
@@ -25,6 +26,7 @@ PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 #include <string>
 #include <vector>
 
+class Collision;
 class DrawList;
 class Flotsam;
 class Minable;
@@ -46,48 +48,46 @@ class AsteroidField {
 public:
 	// Constructor, to set up the collision set parameters.
 	AsteroidField();
-	
+
 	// Reset the asteroid field (typically because you entered a new system).
 	void Clear();
 	void Add(const std::string &name, int count, double energy = 1.);
-	void Add(const Minable *minable, int count, double energy, const WeightedList<System::Belt> &belts);
-	
+	void Add(const Minable *minable, int count, double energy, const WeightedList<double> &belts);
+
 	// Move all the asteroids forward one time step, and populate the asteroid and minable collision sets.
 	void Step(std::vector<Visual> &visuals, std::list<std::shared_ptr<Flotsam>> &flotsam, int step);
 	// Draw the asteroid field, with the field of view centered on the given point.
 	void Draw(DrawList &draw, const Point &center, double zoom) const;
-	// Check if the given projectile has hit any of the asteroids, using the information
-	// in the collision sets. If a collision occurs, returns a pointer to the hit body.
-	Body *Collide(const Projectile &projectile, double *closestHit);
-	
+
+	// Check if the given projectile collides with any asteroids. This excludes minables.
+	void CollideAsteroids(const Projectile &projectile, std::vector<Collision> &result) const;
+	// Check if the given projectile collides with any minables.
+	void CollideMinables(const Projectile &projectile, std::vector<Collision> &result) const;
+
 	// Get the list of minable asteroids.
 	const std::list<std::shared_ptr<Minable>> &Minables() const;
-	
-	
+
+
 private:
 	// This class represents an asteroid that cannot be destroyed or even
 	// deflected from its trajectory, and that repeats every 4096 pixels.
 	class Asteroid : public Body {
 	public:
 		Asteroid(const Sprite *sprite, double energy);
-		
+
 		void Step();
 		void Draw(DrawList &draw, const Point &center, double zoom) const;
-		
+
 	private:
 		Angle spin;
 		Point size;
 	};
-	
-	
+
+
 private:
 	std::vector<Asteroid> asteroids;
 	std::list<std::shared_ptr<Minable>> minables;
-	
+
 	CollisionSet asteroidCollisions;
 	CollisionSet minableCollisions;
 };
-
-
-
-#endif

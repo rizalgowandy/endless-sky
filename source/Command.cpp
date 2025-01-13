@@ -7,7 +7,10 @@ Foundation, either version 3 of the License, or (at your option) any later versi
 
 Endless Sky is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "Command.h"
@@ -35,40 +38,52 @@ namespace {
 	// Keep track of any keycodes that are mapped to multiple commands, in order
 	// to display a warning to the player.
 	map<int, int> keycodeCount;
+	// Need a uint64_t 1 to generate Commands.
+	const uint64_t ONE = 1;
 }
+
+
 
 // Command enumeration, including the descriptive strings that are used for the
 // commands both in the preferences panel and in the saved key settings.
 const Command Command::NONE(0, "");
-const Command Command::MENU(1uL << 0, "Show main menu");
-const Command Command::FORWARD(1uL << 1, "Forward thrust");
-const Command Command::LEFT(1uL << 2, "Turn left");
-const Command Command::RIGHT(1uL << 3, "Turn right");
-const Command Command::BACK(1uL << 4, "Reverse");
-const Command Command::PRIMARY(1uL << 5, "Fire primary weapon");
-const Command Command::SECONDARY(1uL << 6, "Fire secondary weapon");
-const Command Command::SELECT(1uL << 7, "Select secondary weapon");
-const Command Command::LAND(1uL << 8, "Land on planet / station");
-const Command Command::BOARD(1uL << 9, "Board selected ship");
-const Command Command::HAIL(1uL << 10, "Talk to selected ship");
-const Command Command::SCAN(1uL << 11, "Scan selected ship");
-const Command Command::JUMP(1uL << 12, "Initiate hyperspace jump");
-const Command Command::TARGET(1uL << 13, "Select next ship");
-const Command Command::NEAREST(1uL << 14, "Select nearest hostile ship");
-const Command Command::DEPLOY(1uL << 15, "Deploy / recall fighters");
-const Command Command::AFTERBURNER(1uL << 16, "Fire afterburner");
-const Command Command::CLOAK(1uL << 17, "Toggle cloaking device");
-const Command Command::MAP(1uL << 18, "View star map");
-const Command Command::INFO(1uL << 19, "View player info");
-const Command Command::FULLSCREEN(1uL << 20, "Toggle fullscreen");
-const Command Command::FASTFORWARD(1uL << 21, "Toggle fast-forward");
-const Command Command::FIGHT(1uL << 22, "Fleet: Fight my target");
-const Command Command::GATHER(1uL << 23, "Fleet: Gather around me");
-const Command Command::HOLD(1uL << 24, "Fleet: Hold position");
-const Command Command::AMMO(1uL << 25, "Fleet: Toggle ammo usage");
-const Command Command::WAIT(1uL << 26, "");
-const Command Command::STOP(1ul << 27, "");
-const Command Command::SHIFT(1uL << 28, "");
+const Command Command::MENU(ONE << 0, "Show main menu");
+const Command Command::FORWARD(ONE << 1, "Forward thrust");
+const Command Command::LEFT(ONE << 2, "Turn left");
+const Command Command::RIGHT(ONE << 3, "Turn right");
+const Command Command::BACK(ONE << 4, "Reverse");
+const Command Command::MOUSE_TURNING_HOLD(ONE << 5, "Mouse turning (hold)");
+const Command Command::PRIMARY(ONE << 6, "Fire primary weapon");
+const Command Command::TURRET_TRACKING(ONE << 7, "Toggle turret tracking");
+const Command Command::SECONDARY(ONE << 8, "Fire secondary weapon");
+const Command Command::SELECT(ONE << 9, "Select secondary weapon");
+const Command Command::LAND(ONE << 10, "Land on planet / station");
+const Command Command::BOARD(ONE << 11, "Board selected ship");
+const Command Command::HAIL(ONE << 12, "Talk to selected ship");
+const Command Command::SCAN(ONE << 13, "Scan selected ship");
+const Command Command::JUMP(ONE << 14, "Initiate hyperspace jump");
+const Command Command::FLEET_JUMP(ONE << 15, "");
+const Command Command::TARGET(ONE << 16, "Select next ship");
+const Command Command::NEAREST(ONE << 17, "Select nearest hostile ship");
+const Command Command::NEAREST_ASTEROID(ONE << 18, "Select nearest asteroid");
+const Command Command::DEPLOY(ONE << 19, "Deploy / recall fighters");
+const Command Command::AFTERBURNER(ONE << 20, "Fire afterburner");
+const Command Command::CLOAK(ONE << 21, "Toggle cloaking device");
+const Command Command::MAP(ONE << 22, "View star map");
+const Command Command::INFO(ONE << 23, "View player info");
+const Command Command::MESSAGE_LOG(ONE << 24, "View message log");
+const Command Command::FULLSCREEN(ONE << 25, "Toggle fullscreen");
+const Command Command::FASTFORWARD(ONE << 26, "Toggle fast-forward");
+const Command Command::HELP(ONE << 27, "Show help");
+const Command Command::FIGHT(ONE << 28, "Fleet: Fight my target");
+const Command Command::GATHER(ONE << 29, "Fleet: Gather around me");
+const Command Command::HOLD(ONE << 30, "Fleet: Hold position");
+const Command Command::HARVEST(ONE << 31, "Fleet: Harvest flotsam");
+const Command Command::AMMO(ONE << 32, "Fleet: Toggle ammo usage");
+const Command Command::AUTOSTEER(ONE << 33, "Auto steer");
+const Command Command::WAIT(ONE << 34, "");
+const Command Command::STOP(ONE << 35, "");
+const Command Command::SHIFT(ONE << 36, "");
 
 
 
@@ -79,7 +94,7 @@ string Command::ReplaceNamesWithKeys(const string &text)
 	map<string, string> subs;
 	for(const auto &it : description)
 		subs['<' + it.second + '>'] = '"' + keyName[it.first] + '"';
-	
+
 	return Format::Replace(text, subs);
 }
 
@@ -100,14 +115,14 @@ void Command::ReadKeyboard()
 {
 	Clear();
 	const Uint8 *keyDown = SDL_GetKeyboardState(nullptr);
-	
+
 	// Each command can only have one keycode, but misconfigured settings can
 	// temporarily cause one keycode to be used for two commands. Also, more
 	// than one key can be held down at once.
 	for(const auto &it : keycodeForCommand)
 		if(keyDown[SDL_GetScancodeFromKey(it.second)])
 			*this |= it.first;
-	
+
 	// Check whether the `Shift` modifier key was pressed for this step.
 	if(SDL_GetModState() & KMOD_SHIFT)
 		*this |= SHIFT;
@@ -116,15 +131,15 @@ void Command::ReadKeyboard()
 
 
 // Load the keyboard preferences.
-void Command::LoadSettings(const string &path)
+void Command::LoadSettings(const filesystem::path &path)
 {
 	DataFile file(path);
-	
+
 	// Create a map of command names to Command objects in the enumeration above.
 	map<string, Command> commands;
 	for(const auto &it : description)
 		commands[it.second] = it.first;
-	
+
 	// Each command can only have one keycode, one keycode can be assigned
 	// to multiple commands.
 	for(const DataNode &node : file)
@@ -138,7 +153,7 @@ void Command::LoadSettings(const string &path)
 			keyName[command] = SDL_GetKeyName(keycode);
 		}
 	}
-	
+
 	// Regenerate the lookup tables.
 	commandForKeycode.clear();
 	keycodeCount.clear();
@@ -152,10 +167,10 @@ void Command::LoadSettings(const string &path)
 
 
 // Save the keyboard preferences.
-void Command::SaveSettings(const string &path)
+void Command::SaveSettings(const filesystem::path &path)
 {
 	DataWriter out(path);
-	
+
 	for(const auto &it : keycodeForCommand)
 	{
 		auto dit = description.find(it.first);
@@ -173,10 +188,10 @@ void Command::SetKey(Command command, int keycode)
 	// are mapped to the same key and you change one of them, the other stays mapped.
 	keycodeForCommand[command] = keycode;
 	keyName[command] = SDL_GetKeyName(keycode);
-	
+
 	commandForKeycode.clear();
 	keycodeCount.clear();
-	
+
 	for(const auto &it : keycodeForCommand)
 	{
 		commandForKeycode[it.second] = it.first;
@@ -201,9 +216,24 @@ const string &Command::Description() const
 // a combination of more than one command, an empty string is returned.
 const string &Command::KeyName() const
 {
-	static const string empty;
+	static const string empty = "(none)";
 	auto it = keyName.find(*this);
-	return (it == keyName.end() ? empty : it->second);
+
+	return (!HasBinding() ? empty : it->second);
+}
+
+
+
+// Check if the key has no binding.
+bool Command::HasBinding() const
+{
+	auto it = keyName.find(*this);
+
+	if(it == keyName.end())
+		return false;
+	if(it->second.empty())
+		return false;
+	return true;
 }
 
 
@@ -214,7 +244,7 @@ bool Command::HasConflict() const
 	auto it = keycodeForCommand.find(*this);
 	if(it == keycodeForCommand.end())
 		return false;
-	
+
 	auto cit = keycodeCount.find(it->second);
 	return (cit != keycodeCount.end() && cit->second > 1);
 }
@@ -241,6 +271,8 @@ void Command::Load(const DataNode &node)
 			{"hail", Command::HAIL},
 			{"scan", Command::SCAN},
 			{"jump", Command::JUMP},
+			{"mouseturninghold", Command::MOUSE_TURNING_HOLD},
+			{"fleet jump", Command::FLEET_JUMP},
 			{"target", Command::TARGET},
 			{"nearest", Command::NEAREST},
 			{"deploy", Command::DEPLOY},
@@ -254,16 +286,17 @@ void Command::Load(const DataNode &node)
 			{"gather", Command::GATHER},
 			{"hold", Command::HOLD},
 			{"ammo", Command::AMMO},
+			{"nearest asteroid", Command::NEAREST_ASTEROID},
 			{"wait", Command::WAIT},
 			{"stop", Command::STOP},
 			{"shift", Command::SHIFT}
 		};
-		
+
 		auto it = lookup.find(node.Token(i));
 		if(it != lookup.end())
 			Set(it->second);
 		else
-			node.PrintTrace("Skipping unrecognized command \"" + node.Token(i) + "\":");
+			node.PrintTrace("Warning: Skipping unrecognized command \"" + node.Token(i) + "\":");
 	}
 }
 
@@ -329,58 +362,6 @@ void Command::SetTurn(double amount)
 double Command::Turn() const
 {
 	return turn;
-}
-
-
-
-// Check if this command includes a command to fire the given weapon.
-bool Command::HasFire(int index) const
-{
-	if(index < 0 || index >= 32)
-		return false;
-	
-	return state & ((1ull << 32) << index);
-}
-
-
-
-// Add to this set of commands a command to fire the given weapon.
-void Command::SetFire(int index)
-{
-	if(index < 0 || index >= 32)
-		return;
-	
-	state |= ((1ull << 32) << index);
-}
-
-
-
-// Check if any weapons are firing.
-bool Command::IsFiring() const
-{
-	return (state & 0xFFFFFFFF00000000ull);
-}
-
-
-
-// Set the turn rate of the turret with the given weapon index. A value of
-// -1 or 1 means to turn at the full speed the turret is capable of.
-double Command::Aim(int index) const
-{
-	if(index < 0 || index >= 32)
-		return 0;
-	
-	return aim[index] / 127.;
-}
-
-
-
-void Command::SetAim(int index, double amount)
-{
-	if(index < 0 || index >= 32)
-		return;
-	
-	aim[index] = round(127. * max(-1., min(1., amount)));
 }
 
 

@@ -7,12 +7,16 @@ Foundation, either version 3 of the License, or (at your option) any later versi
 
 Endless Sky is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "Person.h"
 
 #include "DataNode.h"
+#include "FormationPattern.h"
 #include "GameData.h"
 #include "Government.h"
 #include "Ship.h"
@@ -30,6 +34,8 @@ void Person::Load(const DataNode &node)
 			location.Load(child);
 		else if(child.Token(0) == "frequency" && child.Size() >= 2)
 			frequency = child.Value(1);
+		else if(child.Token(0) == "formation" && child.Size() >= 2)
+			formationPattern = GameData::Formations().Get(child.Token(1));
 		else if(child.Token(0) == "ship" && child.Size() >= 2)
 		{
 			// Name ships that are not the flagship with the name provided, if any.
@@ -56,7 +62,19 @@ void Person::Load(const DataNode &node)
 void Person::FinishLoading()
 {
 	for(const shared_ptr<Ship> &ship : ships)
+	{
 		ship->FinishLoading(true);
+		if(formationPattern)
+			ship->SetFormationPattern(formationPattern);
+	}
+}
+
+
+
+// Prevent this person from being spawned in any system.
+void Person::NeverSpawn()
+{
+	frequency = 0;
 }
 
 
@@ -69,7 +87,7 @@ int Person::Frequency(const System *system) const
 	// links, don't create them in systems with no links.
 	if(!system || IsDestroyed() || IsPlaced() || system->Links().empty())
 		return 0;
-	
+
 	return (location.IsEmpty() || location.Matches(system)) ? frequency : 0;
 }
 
@@ -109,7 +127,7 @@ bool Person::IsDestroyed() const
 {
 	if(ships.empty() || !ships.front())
 		return true;
-	
+
 	const Ship &flagship = *ships.front();
 	return (flagship.IsDestroyed() || (flagship.GetSystem() && flagship.GetGovernment() != government));
 }
@@ -144,7 +162,7 @@ bool Person::IsPlaced() const
 	for(const shared_ptr<Ship> &ship : ships)
 		if(ship->GetSystem())
 			return true;
-	
+
 	return false;
 }
 

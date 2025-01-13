@@ -7,18 +7,22 @@ Foundation, either version 3 of the License, or (at your option) any later versi
 
 Endless Sky is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
-#ifndef LOAD_PANEL_H_
-#define LOAD_PANEL_H_
+#pragma once
 
 #include "Panel.h"
 
 #include "Point.h"
+#include "Rectangle.h"
 #include "SavedGame.h"
 
 #include <ctime>
+#include <filesystem>
 #include <map>
 #include <string>
 #include <utility>
@@ -35,10 +39,10 @@ class UI;
 class LoadPanel : public Panel {
 public:
 	LoadPanel(PlayerInfo &player, UI &gamePanels);
-	
+
 	virtual void Draw() override;
-	
-	
+
+
 protected:
 	// Only override the ones you need; the default action is to return false.
 	virtual bool KeyDown(SDL_Keycode key, Uint16 mod, const Command &command, bool isNewPress) override;
@@ -46,32 +50,35 @@ protected:
 	virtual bool Hover(int x, int y) override;
 	virtual bool Drag(double dx, double dy) override;
 	virtual bool Scroll(double dx, double dy) override;
-	
-	
+
+
 private:
 	void UpdateLists();
-	
+
 	// Snapshot name callback.
 	void SnapshotCallback(const std::string &name);
-	void WriteSnapshot(const std::string &sourceFile, const std::string &snapshotName);
+	void WriteSnapshot(const std::filesystem::path &sourceFile, const std::filesystem::path &snapshotName);
 	// Load snapshot callback.
 	void LoadCallback();
 	// Delete callbacks.
-	void DeletePilot();
+	void DeletePilot(const std::string &);
 	void DeleteSave();
-	
-	
+
+
 private:
 	PlayerInfo &player;
 	SavedGame loadedInfo;
 	UI &gamePanels;
-	
+
 	std::map<std::string, std::vector<std::pair<std::string, std::time_t>>> files;
 	std::string selectedPilot;
 	std::string selectedFile;
 	// If the player enters a filename that exists, prompt before overwriting it.
 	std::string nameToConfirm;
-	
+
+	const Rectangle pilotBox;
+	const Rectangle snapshotBox;
+
 	Point hoverPoint;
 	int hoverCount = 0;
 	bool hasHover = false;
@@ -79,7 +86,3 @@ private:
 	double sideScroll = 0;
 	double centerScroll = 0;
 };
-
-
-
-#endif
