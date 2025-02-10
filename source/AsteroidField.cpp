@@ -7,18 +7,23 @@ Foundation, either version 3 of the License, or (at your option) any later versi
 
 Endless Sky is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "AsteroidField.h"
 
-#include "DrawList.h"
-#include "Mask.h"
+#include "Collision.h"
+#include "CollisionType.h"
+#include "shader/DrawList.h"
+#include "image/Mask.h"
 #include "Minable.h"
 #include "Projectile.h"
 #include "Random.h"
 #include "Screen.h"
-#include "SpriteSet.h"
+#include "image/SpriteSet.h"
 
 #include <algorithm>
 #include <cmath>
@@ -36,7 +41,8 @@ namespace {
 
 // Constructor, to set up the collision set parameters.
 AsteroidField::AsteroidField()
-	: asteroidCollisions(CELL_SIZE, CELL_COUNT), minableCollisions(CELL_SIZE, CELL_COUNT)
+	: asteroidCollisions(CELL_SIZE, CELL_COUNT, CollisionType::ASTEROID),
+	minableCollisions(CELL_SIZE, CELL_COUNT, CollisionType::MINABLE)
 {
 }
 
@@ -61,17 +67,17 @@ void AsteroidField::Add(const string &name, int count, double energy)
 
 
 
-void AsteroidField::Add(const Minable *minable, int count, double energy, const WeightedList<System::Belt> &belts)
+void AsteroidField::Add(const Minable *minable, int count, double energy, const WeightedList<double> &belts)
 {
 	// Double check that the given asteroid is defined.
 	if(!minable || !minable->GetMask().IsLoaded())
 		return;
-	
+
 	// Place copies of the given minable asteroid throughout the system.
 	for(int i = 0; i < count; ++i)
 	{
 		minables.emplace_back(new Minable(*minable));
-		minables.back()->Place(energy, belts.Get().Radius());
+		minables.back()->Place(energy, belts.Get());
 	}
 }
 
@@ -87,7 +93,7 @@ void AsteroidField::Step(vector<Visual> &visuals, list<shared_ptr<Flotsam>> &flo
 		asteroid.Step();
 	}
 	asteroidCollisions.Finish();
-	
+
 	// Step through the minables. Since they are destructible, we may need to
 	// remove them from the list.
 	minableCollisions.Clear(step);
@@ -118,16 +124,14 @@ void AsteroidField::Draw(DrawList &draw, const Point &center, double zoom) const
 
 
 
-// Check if the given projectile collides with any asteroids.
-Body *AsteroidField::Collide(const Projectile &projectile, double *closestHit)
+// Check if the given projectile collides with any asteroids. This excludes minables.
+void AsteroidField::CollideAsteroids(const Projectile &projectile, vector<Collision> &result) const
 {
-	Body *hit = nullptr;
-	
-	// First, check for collisions with ordinary asteroids, which are tiled.
+	// Check for collisions with ordinary asteroids, which are tiled.
 	// Rather than tiling the collision set, tile the projectile.
 	Point from = projectile.Position();
 	Point to = from + projectile.Velocity();
-	
+
 	// Map the projectile to a position within the wrap square.
 	Point minimum = Point(min(from.X(), to.X()), min(from.Y(), to.Y()));
 	Point maximum = from + to - minimum;
@@ -144,27 +148,21 @@ Body *AsteroidField::Collide(const Projectile &projectile, double *closestHit)
 		for(int x = 0; x < tileX; ++x)
 		{
 			Point offset = Point(x, y) * WRAP;
-			Body *body = asteroidCollisions.Line(from + offset, to + offset, closestHit);
-			if(body)
-				hit = body;
+			asteroidCollisions.Line(from + offset, to + offset, result);
 		}
-	
-	// Now, check for collisions with minable asteroids. Because this is the
-	// very last collision check to be done, if a minable asteroid is the
-	// closest hit, it really is what the projectile struck - that is, we are
-	// not going to later find a ship or something else that is closer.
-	Body *body = minableCollisions.Line(projectile, closestHit);
-	if(body)
-	{
-		hit = body;
-		reinterpret_cast<Minable *>(body)->TakeDamage(projectile);
-	}
-	return hit;
 }
 
 
 
-// Get the list of mainable asteroids.
+// Check if the given projectile collides with any minables.
+void AsteroidField::CollideMinables(const Projectile &projectile, vector<Collision> &result) const
+{
+	minableCollisions.Line(projectile, result);
+}
+
+
+
+// Get the list of minable asteroids.
 const list<shared_ptr<Minable>> &AsteroidField::Minables() const
 {
 	return minables;
@@ -178,10 +176,10 @@ AsteroidField::Asteroid::Asteroid(const Sprite *sprite, double energy)
 	// Energy level determines how fast the asteroid rotates.
 	SetSprite(sprite);
 	SetFrameRate(Random::Real() * 4. * energy + 5.);
-	
+
 	// Pick a random position within the wrapped square.
 	position = Point(Random::Real() * WRAP, Random::Real() * WRAP);
-	
+
 	// In addition to the "spin" inherent in the animation, the asteroid should
 	// spin in screen coordinates. This makes the animation more interesting
 	// because every time it comes back to the same frame it is pointing in a
@@ -189,10 +187,10 @@ AsteroidField::Asteroid::Asteroid(const Sprite *sprite, double energy)
 	// exactly the same axis.
 	angle = Angle::Random();
 	spin = Angle::Random(energy) - Angle::Random(energy);
-	
+
 	// The asteroid's velocity is also determined by the energy level.
 	velocity = angle.Unit() * Random::Real() * energy;
-	
+
 	// Store how big an area the asteroid can cover, so we can figure out when
 	// it is potentially on screen.
 	size = Point(1., 1.) * Radius();
@@ -205,13 +203,13 @@ void AsteroidField::Asteroid::Step()
 {
 	angle += spin;
 	position += velocity;
-	
+
 	// Keep the position within the wrap square.
 	if(position.X() < 0.)
 		position = Point(position.X() + WRAP, position.Y());
 	else if(position.X() >= WRAP)
 		position = Point(position.X() - WRAP, position.Y());
-	
+
 	if(position.Y() < 0.)
 		position = Point(position.X(), position.Y() + WRAP);
 	else if(position.Y() >= WRAP)
@@ -226,14 +224,14 @@ void AsteroidField::Asteroid::Draw(DrawList &draw, const Point &center, double z
 	// Any object within this range must be drawn.
 	Point topLeft = center + (Screen::TopLeft() - size) / zoom;
 	Point bottomRight = center + (Screen::BottomRight() + size) / zoom;
-	
+
 	// Figure out the position of the first instance of this asteroid that is to
 	// the right of and below the top left corner of the screen.
 	double startX = fmod(position.X() - topLeft.X(), WRAP);
 	startX += topLeft.X() + WRAP * (startX < 0.);
 	double startY = fmod(position.Y() - topLeft.Y(), WRAP);
 	startY += topLeft.Y() + WRAP * (startY < 0.);
-	
+
 	// Draw any instances of this asteroid that are on screen.
 	for(double y = startY; y < bottomRight.Y(); y += WRAP)
 		for(double x = startX; x < bottomRight.X(); x += WRAP)

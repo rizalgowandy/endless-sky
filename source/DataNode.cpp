@@ -7,12 +7,16 @@ Foundation, either version 3 of the License, or (at your option) any later versi
 
 Endless Sky is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "DataNode.h"
 
-#include "Files.h"
+#include "DataWriter.h"
+#include "Logger.h"
 
 #include <algorithm>
 #include <cctype>
@@ -36,7 +40,7 @@ DataNode::DataNode(const DataNode *parent) noexcept(false)
 
 // Copy constructor.
 DataNode::DataNode(const DataNode &other)
-	: children(other.children), tokens(other.tokens), lineNumber(other.lineNumber)
+	: children(other.children), tokens(other.tokens), lineNumber(std::move(other.lineNumber))
 {
 	Reparent();
 }
@@ -48,7 +52,7 @@ DataNode &DataNode::operator=(const DataNode &other)
 {
 	children = other.children;
 	tokens = other.tokens;
-	lineNumber = other.lineNumber;
+	lineNumber = std::move(other.lineNumber);
 	Reparent();
 	return *this;
 }
@@ -56,7 +60,7 @@ DataNode &DataNode::operator=(const DataNode &other)
 
 
 DataNode::DataNode(DataNode &&other) noexcept
-	: children(std::move(other.children)), tokens(std::move(other.tokens)), lineNumber(std::move(other.lineNumber))
+	: children(std::move(other.children)), tokens(std::move(other.tokens)), lineNumber(other.lineNumber)
 {
 	Reparent();
 }
@@ -67,7 +71,7 @@ DataNode &DataNode::operator=(DataNode &&other) noexcept
 {
 	children.swap(other.children);
 	tokens.swap(other.tokens);
-	lineNumber = std::move(other.lineNumber);
+	lineNumber = other.lineNumber;
 	Reparent();
 	return *this;
 }
@@ -90,6 +94,14 @@ const vector<string> &DataNode::Tokens() const noexcept
 
 
 
+// Add tokens to the node.
+void DataNode::AddToken(const std::string &token)
+{
+	tokens.emplace_back(token);
+}
+
+
+
 // Get the token with the given index. No bounds checking is done.
 // DataFile loading guarantees index 0 always exists.
 const string &DataNode::Token(int index) const
@@ -104,12 +116,12 @@ double DataNode::Value(int index) const
 {
 	// Check for empty strings and out-of-bounds indices.
 	if(static_cast<size_t>(index) >= tokens.size() || tokens[index].empty())
-		PrintTrace("Requested token index (" + to_string(index) + ") is out of bounds:");
+		PrintTrace("Error: Requested token index (" + to_string(index) + ") is out of bounds:");
 	else if(!IsNumber(tokens[index]))
-		PrintTrace("Cannot convert value \"" + tokens[index] + "\" to a number:");
+		PrintTrace("Error: Cannot convert value \"" + tokens[index] + "\" to a number:");
 	else
 		return Value(tokens[index]);
-	
+
 	return 0.;
 }
 
@@ -121,20 +133,20 @@ double DataNode::Value(const string &token)
 	// Allowed format: "[+-]?[0-9]*[.]?[0-9]*([eE][+-]?[0-9]*)?".
 	if(!IsNumber(token))
 	{
-		Files::LogError("Cannot convert value \"" + token + "\" to a number.");
+		Logger::LogError("Cannot convert value \"" + token + "\" to a number.");
 		return 0.;
 	}
 	const char *it = token.c_str();
-	
+
 	// Check for leading sign.
 	double sign = (*it == '-') ? -1. : 1.;
 	it += (*it == '-' || *it == '+');
-	
+
 	// Digits before the decimal point.
 	int64_t value = 0;
 	while(*it >= '0' && *it <= '9')
 		value = (value * 10) + (*it++ - '0');
-	
+
 	// Digits after the decimal point (if any).
 	int64_t power = 0;
 	if(*it == '.')
@@ -146,21 +158,21 @@ double DataNode::Value(const string &token)
 			--power;
 		}
 	}
-	
+
 	// Exponent.
 	if(*it == 'e' || *it == 'E')
 	{
 		++it;
 		int64_t sign = (*it == '-') ? -1 : 1;
 		it += (*it == '-' || *it == '+');
-		
+
 		int64_t exponent = 0;
 		while(*it >= '0' && *it <= '9')
 			exponent = (exponent * 10) + (*it++ - '0');
-		
+
 		power += sign * exponent;
 	}
-	
+
 	// Compose the return value.
 	return copysign(value * pow(10., power), sign);
 }
@@ -174,7 +186,7 @@ bool DataNode::IsNumber(int index) const
 	// Make sure this token exists and is not empty.
 	if(static_cast<size_t>(index) >= tokens.size() || tokens[index].empty())
 		return false;
-	
+
 	return IsNumber(tokens[index]);
 }
 
@@ -218,6 +230,72 @@ bool DataNode::IsNumber(const string &token)
 
 
 
+// Convert the token at the given index to a boolean. This returns false
+// and prints an error if the index is out of range or the token cannot
+// be interpreted as a number.
+bool DataNode::BoolValue(int index) const
+{
+	// Check for empty strings and out-of-bounds indices.
+	if(static_cast<size_t>(index) >= tokens.size() || tokens[index].empty())
+		PrintTrace("Error: Requested token index (" + to_string(index) + ") is out of bounds:");
+	else if(!IsBool(tokens[index]))
+		PrintTrace("Error: Cannot convert value \"" + tokens[index] + "\" to a boolean:");
+	else
+	{
+		const string &token = tokens[index];
+		return token == "true" || token == "1";
+	}
+
+	return false;
+}
+
+
+
+// Check if the token at the given index is a boolean, i.e. "true"/"1" or "false"/"0"
+// as a string.
+bool DataNode::IsBool(int index) const
+{
+	// Make sure this token exists and is not empty.
+	if(static_cast<size_t>(index) >= tokens.size() || tokens[index].empty())
+		return false;
+
+	return IsBool(tokens[index]);
+}
+
+
+
+bool DataNode::IsBool(const string &token)
+{
+	return token == "true" || token == "1" || token == "false" || token == "0";
+}
+
+
+
+bool DataNode::IsConditionName(const string &token)
+{
+	// For now check if condition names start with an alphabetic character, and that is all we check for now.
+	// Token "'" is required for backwards compatibility (used for illegal tokens).
+	// Boolean keywords are not valid conditionNames, so we also check for that.
+	return
+		!token.empty() &&
+		!IsBool(token) &&
+		(
+			(token == "'") ||
+			(token[0] >= 'a' && token[0] <= 'z') ||
+			(token[0] >= 'A' && token[0] <= 'Z')
+		);
+}
+
+
+
+// Add a new child. The child's parent must be this node.
+void DataNode::AddChild(const DataNode &child)
+{
+	children.emplace_back(child);
+}
+
+
+
 // Check if this node has any children.
 bool DataNode::HasChildren() const noexcept
 {
@@ -246,12 +324,8 @@ list<DataNode>::const_iterator DataNode::end() const noexcept
 int DataNode::PrintTrace(const string &message) const
 {
 	if(!message.empty())
-	{
-		// Put an empty line in the log between each error message.
-		Files::LogError("");
-		Files::LogError(message);
-	}
-	
+		Logger::LogError(message);
+
 	// Recursively print all the parents of this node, so that the user can
 	// trace it back to the right point in the file.
 	size_t indent = 0;
@@ -259,7 +333,7 @@ int DataNode::PrintTrace(const string &message) const
 		indent = parent->PrintTrace() + 2;
 	if(tokens.empty())
 		return indent;
-	
+
 	// Convert this node back to tokenized text, with quotes used as necessary.
 	string line = !parent ? "" : "L" + to_string(lineNumber) + ": ";
 	line.append(string(indent, ' '));
@@ -267,16 +341,14 @@ int DataNode::PrintTrace(const string &message) const
 	{
 		if(&token != &tokens.front())
 			line += ' ';
-		bool hasSpace = any_of(token.begin(), token.end(), [](char c) { return isspace(c); });
-		bool hasQuote = any_of(token.begin(), token.end(), [](char c) { return (c == '"'); });
-		if(hasSpace)
-			line += hasQuote ? '`' : '"';
-		line += token;
-		if(hasSpace)
-			line += hasQuote ? '`' : '"';
+		line += DataWriter::Quote(token);
 	}
-	Files::LogError(line);
-	
+	Logger::LogError(line);
+
+	// Put an empty line in the log between each error message.
+	if(!message.empty())
+		Logger::LogError("");
+
 	// Tell the caller what indentation level we're at now.
 	return indent;
 }

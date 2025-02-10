@@ -7,11 +7,17 @@ Foundation, either version 3 of the License, or (at your option) any later versi
 
 Endless Sky is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
-#ifndef RANDOMEVENT_H_
-#define RANDOMEVENT_H_
+#pragma once
+
+#include "ConditionSet.h"
+#include "ConditionsStore.h"
+#include "DataNode.h"
 
 
 
@@ -20,35 +26,44 @@ PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 template <typename T>
 class RandomEvent {
 public:
-	constexpr RandomEvent(const T *event, int period) noexcept;
+	RandomEvent(const T *event, int period, const DataNode &node) noexcept;
 
-	constexpr const T *Get() const noexcept;
-	constexpr int Period() const noexcept;
+	const T *Get() const noexcept;
+	int Period() const noexcept;
+	bool CanTrigger(const ConditionsStore &tester) const;
 
 private:
 	const T *event;
 	int period;
+	ConditionSet conditions;
 };
 
 
 
 template <typename T>
-constexpr RandomEvent<T>::RandomEvent(const T *event, int period) noexcept : event(event), period(period > 0 ? period : 200)
+RandomEvent<T>::RandomEvent(const T *event, int period, const DataNode &node) noexcept
+	: event(event), period(period > 0 ? period : 200)
 {
+	for(const auto &child : node)
+		if(child.Size() == 2 && child.Token(0) == "to" && child.Token(1) == "spawn")
+			conditions.Load(child);
+		// TODO: else with an error-message?
 }
 
 template <typename T>
-constexpr const T *RandomEvent<T>::Get() const noexcept
+const T *RandomEvent<T>::Get() const noexcept
 {
 	return event;
 }
 
 template <typename T>
-constexpr int RandomEvent<T>::Period() const noexcept
+int RandomEvent<T>::Period() const noexcept
 {
 	return period;
 }
 
-
-
-#endif
+template <typename T>
+bool RandomEvent<T>::CanTrigger(const ConditionsStore &tester) const
+{
+	return conditions.IsEmpty() || conditions.Test(tester);
+}

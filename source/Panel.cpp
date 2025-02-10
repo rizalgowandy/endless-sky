@@ -7,7 +7,10 @@ Foundation, either version 3 of the License, or (at your option) any later versi
 
 Endless Sky is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "Panel.h"
@@ -15,34 +18,48 @@ PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 #include "Color.h"
 #include "Command.h"
 #include "Dialog.h"
-#include "FillShader.h"
+#include "shader/FillShader.h"
+#include "text/Format.h"
 #include "GameData.h"
 #include "Point.h"
 #include "Preferences.h"
 #include "Screen.h"
+#include "image/Sprite.h"
+#include "shader/SpriteShader.h"
 #include "UI.h"
 
 using namespace std;
 
 
 
-// Move the state of this panel forward one game step.
-void Panel::Step()
+// Draw a sprite repeatedly to make a vertical edge.
+void Panel::DrawEdgeSprite(const Sprite *edgeSprite, int posX)
 {
+	if(edgeSprite->Height())
+	{
+		// If the screen is high enough, the edge sprite should repeat.
+		double spriteHeight = edgeSprite->Height();
+		Point pos(
+			posX + .5 * edgeSprite->Width(),
+			Screen::Top() + .5 * spriteHeight);
+		for( ; pos.Y() - .5 * spriteHeight < Screen::Bottom(); pos.Y() += spriteHeight)
+			SpriteShader::Draw(edgeSprite, pos);
+	}
 }
 
 
 
-// Draw this panel.
-void Panel::Draw()
+// Move the state of this panel forward one game step.
+void Panel::Step()
 {
+	// It is ok for panels to be stateless.
 }
 
 
 
 // Return true if this is a full-screen panel, so there is no point in
 // drawing any of the panels under it.
-bool Panel::IsFullScreen()
+bool Panel::IsFullScreen() const noexcept
 {
 	return isFullScreen;
 }
@@ -51,7 +68,7 @@ bool Panel::IsFullScreen()
 
 // Return true if, when this panel is on the stack, no events should be
 // passed to any panel under it. By default, all panels do this.
-bool Panel::TrapAllEvents()
+bool Panel::TrapAllEvents() const noexcept
 {
 	return trapAllEvents;
 }
@@ -59,7 +76,7 @@ bool Panel::TrapAllEvents()
 
 
 // Check if this panel can be "interrupted" to return to the main menu.
-bool Panel::IsInterruptible() const
+bool Panel::IsInterruptible() const noexcept
 {
 	return isInterruptible;
 }
@@ -95,6 +112,12 @@ void Panel::AddZone(const Rectangle &rect, SDL_Keycode key)
 // so, apply that zone's action and return true.
 bool Panel::ZoneClick(const Point &point)
 {
+	for(auto it = children.rbegin(); it != children.rend(); ++it)
+	{
+		if((*it)->ZoneClick(point))
+			return true;
+	}
+
 	for(const Zone &zone : zones)
 		if(zone.Contains(point))
 		{
@@ -110,18 +133,37 @@ bool Panel::ZoneClick(const Point &point)
 
 
 
-// Forward the given TestContext to the Engine under MainPanel.
-void Panel::SetTestContext(TestContext &testContext)
+// Panels will by default not allow fast-forward. The ones that do allow
+// it will override this (virtual) function and return true.
+bool Panel::AllowsFastForward() const noexcept
 {
+	return false;
 }
 
 
 
-// Panels will by default not allow fast-forward. The ones that do allow
-// it will override this (virtual) function and return true.
-bool Panel::AllowFastForward() const
+void Panel::AddOrRemove()
 {
-	return false;
+	for(auto &panel : childrenToAdd)
+		if(panel)
+			children.emplace_back(std::move(panel));
+	childrenToAdd.clear();
+
+	for(auto *panel : childrenToRemove)
+	{
+		for(auto it = children.begin(); it != children.end(); ++it)
+		{
+			if(it->get() == panel)
+			{
+				children.erase(it);
+				break;
+			}
+		}
+	}
+	childrenToRemove.clear();
+
+	for(auto &child : children)
+		child->AddOrRemove();
 }
 
 
@@ -175,7 +217,65 @@ bool Panel::Release(int x, int y)
 }
 
 
-	
+
+bool Panel::DoKeyDown(SDL_Keycode key, Uint16 mod, const Command &command, bool isNewPress)
+{
+	return EventVisit(&Panel::KeyDown, key, mod, command, isNewPress);
+}
+
+
+
+bool Panel::DoClick(int x, int y, int clicks)
+{
+	return EventVisit(&Panel::Click, x, y, clicks);
+}
+
+
+
+bool Panel::DoRClick(int x, int y)
+{
+	return EventVisit(&Panel::RClick, x, y);
+}
+
+
+
+bool Panel::DoHover(int x, int y)
+{
+	return EventVisit(&Panel::Hover, x, y);
+}
+
+
+
+bool Panel::DoDrag(double dx, double dy)
+{
+	return EventVisit(&Panel::Drag, dx, dy);
+}
+
+
+
+bool Panel::DoRelease(int x, int y)
+{
+	return EventVisit(&Panel::Release, x, y);
+}
+
+
+
+bool Panel::DoScroll(double dx, double dy)
+{
+	return EventVisit(&Panel::Scroll, dx, dy);
+}
+
+
+
+void Panel::DoDraw()
+{
+	Draw();
+	for(auto &child : children)
+		child->DoDraw();
+}
+
+
+
 void Panel::SetIsFullScreen(bool set)
 {
 	isFullScreen = set;
@@ -196,13 +296,13 @@ void Panel::SetInterruptible(bool set)
 }
 
 
-	
+
 // Dim the background of this panel.
 void Panel::DrawBackdrop() const
 {
 	if(!GetUI()->IsTop(this))
 		return;
-	
+
 	// Darken everything but the dialog.
 	const Color &back = *GameData::Colors().Get("dialog backdrop");
 	FillShader::Fill(Point(), Point(Screen::Width(), Screen::Height()), back);
@@ -210,7 +310,7 @@ void Panel::DrawBackdrop() const
 
 
 
-UI *Panel::GetUI() const
+UI *Panel::GetUI() const noexcept
 {
 	return ui;
 }
@@ -233,7 +333,7 @@ bool Panel::DoKey(SDL_Keycode key, Uint16 mod)
 int Panel::Modifier()
 {
 	SDL_Keymod mod = SDL_GetModState();
-	
+
 	int modifier = 1;
 	if(mod & KMOD_ALT)
 		modifier *= 500;
@@ -241,27 +341,27 @@ int Panel::Modifier()
 		modifier *= 20;
 	if(mod & KMOD_SHIFT)
 		modifier *= 5;
-	
+
 	return modifier;
 }
 
 
 
-// Display the given help message if it has not yet been shown. Return true
-// if the message was displayed.
-bool Panel::DoHelp(const string &name) const
+// Display the given help message if it has not yet been shown
+// (or if force is set to true). Return true if the message was displayed.
+bool Panel::DoHelp(const string &name, bool force) const
 {
 	string preference = "help: " + name;
-	if(Preferences::Has(preference))
+	if(!force && Preferences::Has(preference))
 		return false;
-	
+
 	const string &message = GameData::HelpMessage(name);
 	if(message.empty())
 		return false;
-	
+
 	Preferences::Set(preference);
-	ui->Push(new Dialog(message));
-	
+	ui->Push(new Dialog(Format::Capitalize(name) + ":\n\n" + message));
+
 	return true;
 }
 
@@ -270,4 +370,18 @@ bool Panel::DoHelp(const string &name) const
 void Panel::SetUI(UI *ui)
 {
 	this->ui = ui;
+}
+
+
+
+void Panel::AddChild(const shared_ptr<Panel> &panel)
+{
+	childrenToAdd.push_back(panel);
+}
+
+
+
+void Panel::RemoveChild(const Panel *panel)
+{
+	childrenToRemove.push_back(panel);
 }

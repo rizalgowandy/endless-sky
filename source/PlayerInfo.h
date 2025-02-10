@@ -7,22 +7,30 @@ Foundation, either version 3 of the License, or (at your option) any later versi
 
 Endless Sky is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
-#ifndef PLAYER_INFO_H_
-#define PLAYER_INFO_H_
+#pragma once
 
 #include "Account.h"
 #include "CargoHold.h"
+#include "ConditionsStore.h"
 #include "CoreStartData.h"
 #include "DataNode.h"
 #include "Date.h"
 #include "Depreciation.h"
+#include "EsUuid.h"
 #include "GameEvent.h"
+#include "Government.h"
 #include "Mission.h"
+#include "RaidFleet.h"
+#include "SystemEntry.h"
 
 #include <chrono>
+#include <filesystem>
 #include <list>
 #include <map>
 #include <memory>
@@ -31,7 +39,6 @@ PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 #include <utility>
 #include <vector>
 
-class Government;
 class Outfit;
 class Planet;
 class Rectangle;
@@ -52,6 +59,13 @@ class UI;
 // and what their current travel plan is, if any.
 class PlayerInfo {
 public:
+	struct FleetBalance {
+		int64_t maintenanceCosts = 0;
+		int64_t assetsReturns = 0;
+	};
+
+
+public:
 	PlayerInfo() = default;
 	// Don't allow copying this class.
 	PlayerInfo(const PlayerInfo &) = delete;
@@ -59,51 +73,61 @@ public:
 	PlayerInfo(PlayerInfo &&) = default;
 	PlayerInfo &operator=(PlayerInfo &&) = default;
 	~PlayerInfo() noexcept = default;
-	
+
 	// Reset the player to an "empty" state, i.e. no player is loaded.
 	void Clear();
-	
+
 	// Check if any player's information is loaded.
 	bool IsLoaded() const;
 	// Make a new player.
 	void New(const StartConditions &start);
 	// Load an existing player.
-	void Load(const std::string &path);
+	void Load(const std::filesystem::path &path);
 	// Load the most recently saved player. If no save could be loaded, returns false.
 	bool LoadRecent();
 	// Save this player (using the Identifier() as the file name).
 	void Save() const;
-	
+
 	// Get the root filename used for this player's saved game files. (If there
 	// are multiple pilots with the same name it may have a digit appended.)
 	std::string Identifier() const;
-	
+
+	// Start a transaction. This stores the current state, and any Save()
+	// calls during the transaction will store this saved state.
+	void StartTransaction();
+	// Complete the transaction.
+	void FinishTransaction();
+
 	// Apply the given changes and store them in the player's saved game file.
 	void AddChanges(std::list<DataNode> &changes);
 	// Add an event that will happen at the given date.
-	void AddEvent(const GameEvent &event, const Date &date);
-	
+	void AddEvent(GameEvent event, const Date &date);
+
 	// Mark the player as dead, or check if they have died.
 	void Die(int response = 0, const std::shared_ptr<Ship> &capturer = nullptr);
 	bool IsDead() const;
-	
+
 	// Get or set the player's name.
 	const std::string &FirstName() const;
 	const std::string &LastName() const;
 	void SetName(const std::string &first, const std::string &last);
-	
+
 	// Get or change the current date.
 	const Date &GetDate() const;
-	void IncrementDate();
-	
+	void AdvanceDate(int amount = 1);
+
 	// Get basic data about the player's starting scenario.
 	const CoreStartData &StartData() const noexcept;
-	
+
+	// Sets the means the player used to enter the system.
+	void SetSystemEntry(SystemEntry entryType);
+	SystemEntry GetSystemEntry() const;
 	// Set the system the player is in. This must be stored here so that even if
 	// the player sells all their ships, we still know where the player is.
 	// This also marks the given system as visited.
 	void SetSystem(const System &system);
 	const System *GetSystem() const;
+	const System *GetPreviousSystem() const;
 	// Set what planet the player is on (or nullptr, if taking off).
 	void SetPlanet(const Planet *planet);
 	const Planet *GetPlanet() const;
@@ -112,15 +136,21 @@ public:
 	// Check whether a mission conversation has raised a flag that the player
 	// must leave the planet immediately (without time to do anything else).
 	bool ShouldLaunch() const;
-	
+
 	// Access the player's accounting information.
 	const Account &Accounts() const;
 	Account &Accounts();
 	// Calculate the daily salaries for crew, not counting crew on "parked" ships.
 	int64_t Salaries() const;
-	// Calculate the daily maintenance cost for all ships and in cargo outfits.
-	int64_t Maintenance() const;
-	
+	// Calculate the daily maintenance cost and generated income for all ships and in cargo outfits.
+	FleetBalance MaintenanceAndReturns() const;
+
+	// Access to the licenses the player owns.
+	void AddLicense(const std::string &name);
+	void RemoveLicense(const std::string &name);
+	bool HasLicense(const std::string &name) const;
+	const std::set<std::string> &Licenses() const;
+
 	// Access the flagship (the first ship in the list). This returns null if
 	// the player does not have any ships that can be a flagship.
 	const Ship *Flagship() const;
@@ -133,23 +163,29 @@ public:
 	std::map<const std::shared_ptr<Ship>, std::vector<std::string>> FlightCheck() const;
 	// Add a captured ship to your fleet.
 	void AddShip(const std::shared_ptr<Ship> &ship);
-	// Buy or sell a ship.
-	void BuyShip(const Ship *model, const std::string &name, bool isGift = false);
-	void SellShip(const Ship *selected);
+	// Buy, receive or sell a ship.
+	// In the case of a gift, return a pointer to the newly instantiated ship.
+	void BuyShip(const Ship *model, const std::string &name);
+	const Ship *GiftShip(const Ship *model, const std::string &name, const std::string &id);
+	void SellShip(const Ship *selected, bool storeOutfits = false);
+	// Take the ship from the player, if a model is specified this will permanently remove outfits in said model,
+	// instead of allowing the player to buy them back by putting them in the stock.
+	void TakeShip(const Ship *shipToTake, const Ship *model = nullptr, bool takeOutfits = false);
 	std::vector<std::shared_ptr<Ship>>::iterator DisownShip(const Ship *selected);
 	void ParkShip(const Ship *selected, bool isParked);
 	void RenameShip(const Ship *selected, const std::string &name);
 	// Change the order of the given ship in the list.
 	void ReorderShip(int fromIndex, int toIndex);
-	int ReorderShips(const std::set<int> &fromIndices, int toIndex);
+	void SetShipOrder(const std::vector<std::shared_ptr<Ship>> &newOrder);
 	// Get the attraction factors of the player's fleet to raid fleets.
 	std::pair<double, double> RaidFleetFactors() const;
-	
+	double RaidFleetAttraction(const RaidFleet &raidFleet, const System *system) const;
+
 	// Get cargo information.
 	CargoHold &Cargo();
 	const CargoHold &Cargo() const;
 	// Get items stored on the player's current planet.
-	CargoHold *Storage(bool forceCreate = false);
+	CargoHold &Storage();
 	// Get items stored on all planets (for map display).
 	const std::map<const Planet *, CargoHold> &PlanetaryStorage() const;
 	// Get cost basis for commodities.
@@ -159,29 +195,50 @@ public:
 	void UpdateCargoCapacities();
 	// Switch cargo from being stored in ships to being stored here.
 	void Land(UI *ui);
-	// Load the cargo back into your ships. This may require selling excess.
-	bool TakeOff(UI *ui);
+	// Make ships ready for take off. This may require selling excess cargo.
+	bool TakeOff(UI *ui, bool distributeCargo);
+	// Pool cargo from local ships.
+	void PoolCargo();
+	// Distribute cargo to local ships. Returns a reference to the player's cargo.
+	const CargoHold &DistributeCargo();
 
 	// Get or add to pilot's playtime.
 	double GetPlayTime() const noexcept;
 	void AddPlayTime(std::chrono::nanoseconds timeVal);
-	
+
 	// Get the player's logbook.
 	const std::multimap<Date, std::string> &Logbook() const;
 	void AddLogEntry(const std::string &text);
 	const std::map<std::string, std::map<std::string, std::string>> &SpecialLogs() const;
 	void AddSpecialLog(const std::string &type, const std::string &name, const std::string &text);
+	void RemoveSpecialLog(const std::string &type, const std::string &name);
+	void RemoveSpecialLog(const std::string &type);
 	bool HasLogs() const;
-	
+
 	// Get mission information.
 	const std::list<Mission> &Missions() const;
 	const std::list<Mission> &AvailableJobs() const;
+
+	enum SortType {ABC, PAY, SPEED, CONVENIENT};
+	const SortType GetAvailableSortType() const;
+	void NextAvailableSortType();
+	const bool ShouldSortAscending() const;
+	void ToggleSortAscending();
+	const bool ShouldSortSeparateDeadline() const;
+	void ToggleSortSeparateDeadline();
+	const bool ShouldSortSeparatePossible() const;
+	void ToggleSortSeparatePossible();
+	void SortAvailable();
+
 	const Mission *ActiveBoardingMission() const;
 	void UpdateMissionNPCs();
 	void AcceptJob(const Mission &mission, UI *ui);
 	// Check to see if there is any mission to offer right now.
 	Mission *MissionToOffer(Mission::Location location);
 	Mission *BoardingMission(const std::shared_ptr<Ship> &ship);
+	// Return true if the given ship is capturable only because it's the source
+	// of a boarding mission which allows it to be.
+	bool CaptureOverriden(const std::shared_ptr<Ship> &ship) const;
 	void ClearActiveBoardingMission();
 	// If one of your missions cannot be offered because you do not have enough
 	// space for it, and it specifies a message to be shown in that situation,
@@ -197,18 +254,24 @@ public:
 	void FailMission(const Mission &mission);
 	// Update mission status based on an event.
 	void HandleEvent(const ShipEvent &event, UI *ui);
-	
+
 	// Access the "condition" flags for this player.
-	int64_t GetCondition(const std::string &name) const;
-	std::map<std::string, int64_t> &Conditions();
-	const std::map<std::string, int64_t> &Conditions() const;
-	// Set and check the reputation conditions, which missions and events
-	// can use to modify the player's reputation with other governments.
-	void SetReputationConditions();
-	void CheckReputationConditions();
-	
+	ConditionsStore &Conditions();
+	const ConditionsStore &Conditions() const;
+	// Maps defined names for gifted ships to UUIDs for the ship instances.
+	const std::map<std::string, EsUuid> &GiftedShips() const;
+	std::map<std::string, std::string> GetSubstitutions() const;
+	void AddPlayerSubstitutions(std::map<std::string, std::string> &subs) const;
+
+	// Get and set the "tribute" that the player receives from dominated planets.
+	bool SetTribute(const Planet *planet, int64_t payment);
+	bool SetTribute(const std::string &planetTrueName, int64_t payment);
+	const std::map<const Planet *, int64_t> &GetTribute() const;
+	int64_t GetTributeTotal() const;
+
 	// Check what the player knows about the given system or planet.
 	bool HasSeen(const System &system) const;
+	bool CanView(const System &system) const;
 	bool HasVisited(const System &system) const;
 	bool HasVisited(const Planet &planet) const;
 	bool KnowsName(const System &system) const;
@@ -218,7 +281,12 @@ public:
 	// Mark a system and its planets as unvisited, even if visited previously.
 	void Unvisit(const System &system);
 	void Unvisit(const Planet &planet);
-	
+
+	// Check whether the player has visited the <mapSize> systems around the current one.
+	bool HasMapped(int mapSize) const;
+	// Mark a whole map of systems as visited.
+	void Map(int mapSize);
+
 	// Access the player's travel plan.
 	bool HasTravelPlan() const;
 	const std::vector<const System *> &TravelPlan() const;
@@ -228,11 +296,13 @@ public:
 	// Get or set the planet to land on at the end of the travel path.
 	const Planet *TravelDestination() const;
 	void SetTravelDestination(const Planet *planet);
-	
+
 	// Toggle which secondary weapon the player has selected.
-	const std::set<const Outfit *> &SelectedWeapons() const;
-	void SelectNext();
-	
+	const std::set<const Outfit *> &SelectedSecondaryWeapons() const;
+	void SelectNextSecondary();
+	void DeselectAllSecondaries();
+	void ToggleAnySecondary(const Outfit *outfit);
+
 	// Escorts currently selected for giving orders.
 	const std::vector<std::weak_ptr<Ship>> &SelectedShips() const;
 	// Select any player ships in the given box or list. Return true if any were
@@ -240,27 +310,29 @@ public:
 	bool SelectShips(const Rectangle &box, bool hasShift);
 	bool SelectShips(const std::vector<const Ship *> &stack, bool hasShift);
 	void SelectShip(const Ship *ship, bool hasShift);
+	void DeselectShip(const Ship *ship);
 	void SelectGroup(int group, bool hasShift);
 	void SetGroup(int group, const std::set<Ship *> *newShips = nullptr);
 	std::set<Ship *> GetGroup(int group);
-	
+
 	// Keep track of any outfits that you have sold since landing. These will be
 	// available to buy back until you take off.
+	const std::map<const Outfit*, int> &GetStock() const;
 	int Stock(const Outfit *outfit) const;
 	void AddStock(const Outfit *outfit, int count);
 	// Get depreciation information.
 	const Depreciation &FleetDepreciation() const;
 	const Depreciation &StockDepreciation() const;
-	
+
 	// Keep track of what materials you have mined in each system.
 	void Harvest(const Outfit *type);
 	const std::set<std::pair<const System *, const Outfit *>> &Harvested() const;
-	
+
 	// Get or set the travel destination for selected escorts via the map.
 	const std::pair<const System *, Point> &GetEscortDestination() const;
 	void SetEscortDestination(const System *system = nullptr, Point pos = Point());
 	bool HasEscortDestination() const;
-	
+
 	// Get or set what coloring is currently selected in the map.
 	int MapColoring() const;
 	void SetMapColoring(int index);
@@ -269,47 +341,66 @@ public:
 	void SetMapZoom(int level);
 	// Get the set of collapsed categories for the named panel.
 	std::set<std::string> &Collapsed(const std::string &name);
-	
-	
+	// Should help dialogs relating to carriers be displayed?
+	bool DisplayCarrierHelp() const;
+
+
 private:
 	// Apply any "changes" saved in this player info to the global game state.
 	void ApplyChanges();
 	// After loading & applying changes, make sure the player & ship locations are sensible.
 	void ValidateLoad();
-	
+	// Helper to register derived conditions.
+	void RegisterDerivedConditions();
+
 	// New missions are generated each time you land on a planet.
-	void UpdateAutoConditions(bool isBoarding = false);
 	void CreateMissions();
 	void StepMissions(UI *ui);
 	void Autosave() const;
 	void Save(const std::string &path) const;
-	
+	void Save(DataWriter &out) const;
+
 	// Check for and apply any punitive actions from planetary security.
 	void Fine(UI *ui);
-	
+
+	// Set the flagship (on departure or during flight).
+	void SetFlagship(Ship &other);
+
 	// Helper function to update the ship selection.
 	void SelectShip(const std::shared_ptr<Ship> &ship, bool *first);
-	
+
+	// Instantiate the given model and add it to the player's fleet.
+	void AddStockShip(const Ship *model, const std::string &name);
+	// When we remove a ship, forget it's stored Uuid.
+	void ForgetGiftedShip(const Ship &oldShip, bool failsMissions = true);
+
 	// Check that this player's current state can be saved.
 	bool CanBeSaved() const;
-	
-	
+	// Handle the daily salaries and payments.
+	void DoAccounting();
+
+
 private:
 	std::string firstName;
 	std::string lastName;
 	std::string filePath;
-	
+
 	Date date;
+	SystemEntry entry = SystemEntry::TAKE_OFF;
+	const System *previousSystem = nullptr;
 	const System *system = nullptr;
 	const Planet *planet = nullptr;
 	bool shouldLaunch = false;
 	bool isDead = false;
-	
+	bool displayCarrierHelp = false;
+
 	// The amount of in-game time played, in seconds.
 	double playTime = 0.;
-	
+
 	Account accounts;
-	
+	// The licenses that the player owns.
+	std::set<std::string> licenses;
+
 	std::shared_ptr<Ship> flagship;
 	std::vector<std::shared_ptr<Ship>> ships;
 	std::vector<std::weak_ptr<Ship>> selectedShips;
@@ -317,10 +408,10 @@ private:
 	CargoHold cargo;
 	std::map<const Planet *, CargoHold> planetaryStorage;
 	std::map<std::string, int64_t> costBasis;
-	
+
 	std::multimap<Date, std::string> logbook;
 	std::map<std::string, std::map<std::string, std::string>> specialLogs;
-	
+
 	// A list of the player's active, accepted missions.
 	std::list<Mission> missions;
 	// These lists are populated when you land on a planet, and saved so that
@@ -337,47 +428,52 @@ private:
 	// This pointer to the most recently accepted boarding mission enables
 	// its NPCs to be placed before the player lands, and is then cleared.
 	Mission *activeBoardingMission = nullptr;
-	
-	std::map<std::string, int64_t> conditions;
-	
+	// How to sort availableJobs
+	bool availableSortAsc = true;
+	SortType availableSortType;
+	bool sortSeparateDeadline = false;
+	bool sortSeparatePossible = false;
+
+	ConditionsStore conditions;
+	std::map<std::string, EsUuid> giftedShips;
+
 	std::set<const System *> seen;
 	std::set<const System *> visitedSystems;
 	std::set<const Planet *> visitedPlanets;
 	std::vector<const System *> travelPlan;
 	const Planet *travelDestination = nullptr;
-	
+
 	std::set<const Outfit *> selectedWeapons;
-	
+
 	std::map<const Outfit *, int> stock;
 	Depreciation depreciation;
 	Depreciation stockDepreciation;
 	std::set<std::pair<const System *, const Outfit *>> harvested;
-	
+
 	// Changes that this PlayerInfo wants to make to the global galaxy state:
 	std::vector<std::pair<const Government *, double>> reputationChanges;
+	std::map<const Planet *, int64_t> tributeReceived;
 	std::list<DataNode> dataChanges;
 	DataNode economy;
 	// Persons that have been killed in this player's universe:
 	std::vector<std::string> destroyedPersons;
-	// Events that are going to happen some time in the future:
-	std::list<GameEvent> gameEvents;
-	
+	// Events that are going to happen some time in the future (sorted by date for easy chronological access):
+	std::multiset<GameEvent> gameEvents;
+
 	// The system and position therein to which the "orbits" system UI issued a move order.
 	std::pair<const System *, Point> interstellarEscortDestination;
 	// Currently selected coloring, in the map panel (defaults to reputation):
 	int mapColoring = -6;
 	int mapZoom = 0;
-	
+
 	// Currently collapsed categories for various panels.
 	std::map<std::string, std::set<std::string>> collapsed;
-	
+
 	bool freshlyLoaded = true;
 	int desiredCrew = 0;
-	
+
 	// Basic information about the player's starting scenario.
 	CoreStartData startData;
+
+	DataWriter *transactionSnapshot = nullptr;
 };
-
-
-
-#endif
